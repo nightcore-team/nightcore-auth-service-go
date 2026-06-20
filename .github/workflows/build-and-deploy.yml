@@ -1,0 +1,57 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Image info
+        run: |
+          echo "✅ Pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Nomad CLI
+        uses: hashicorp/setup-nomad@main
+        with:
+          version: "2.0.0"
+
+      - name: Deploy to Nomad
+        run: |
+            nomad job run -var "image_tag=${{ github.sha }}" -var "repository=${{ github.repository }}" nomad.hcl
+        env:
+          NOMAD_ADDR: "https://nomad.service.consul:4646"
+          NOMAD_CACERT: "/etc/nomad.d/tls/nomad-agent-ca.pem"
+          
