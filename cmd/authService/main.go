@@ -13,7 +13,6 @@ import (
 	"nightcore-team/nightcore-auth-service-go/internal/infra/discord"
 	rds "nightcore-team/nightcore-auth-service-go/internal/infra/redis"
 	"nightcore-team/nightcore-auth-service-go/internal/repository"
-	jwt "nightcore-team/nightcore-auth-service-go/internal/security"
 	"nightcore-team/nightcore-auth-service-go/internal/services"
 	"os"
 	"os/signal"
@@ -36,7 +35,7 @@ func main() {
 
 	sessionRepo := repository.NewSessionRepository(redisClient)
 
-	tokenService := jwt.NewTokenService()
+	tokenService := services.NewTokenService()
 	oauthProvider := discord.NewOauthProvider()
 	oicService := services.NewOICService(sessionRepo, oauthProvider, tokenService)
 
