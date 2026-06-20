@@ -108,15 +108,15 @@ func (s *OICService) Refresh(ctx context.Context, refreshToken, ipAddress string
 	refreshToken = s.tokenService.CreateRefreshToken()
 
 	ttl := time.Hour * 24 * time.Duration(config.JWT.RefreshTokenDaysTTL)
-	session, err = s.sessionRepo.Create(ctx, ttl, ipAddress, refreshToken, session.UserID)
+	newSession, err := s.sessionRepo.Create(ctx, ttl, ipAddress, refreshToken, session.UserID)
 	if err != nil {
 		slog.Error("failed to create session on refresh", "user_id", session.UserID, "error", err)
 		return nil, err
 	}
 
-	accessToken, err := s.tokenService.CreateAccessToken(session.UserID)
+	accessToken, err := s.tokenService.CreateAccessToken(newSession.UserID)
 	if err != nil {
-		slog.Error("failed to create access token on refresh", "user_id", session.UserID, "error", err)
+		slog.Error("failed to create access token on refresh", "user_id", newSession.UserID, "error", err)
 		return nil, err
 	}
 
