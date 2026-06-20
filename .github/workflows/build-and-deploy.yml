@@ -9,7 +9,23 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test -v -race -cover ./...
+
   build:
+    needs: test
     runs-on: [self-hosted, linux]
     permissions:
       contents: read
@@ -54,4 +70,3 @@ jobs:
         env:
           NOMAD_ADDR: "https://nomad.service.consul:4646"
           NOMAD_CACERT: "/etc/nomad.d/tls/nomad-agent-ca.pem"
-          
