@@ -34,9 +34,9 @@ func main() {
 	redisClient := rds.NewRedisClient()
 
 	sessionRepo := repository.NewSessionRepository(redisClient)
-
 	tokenService := services.NewTokenService()
 	oauthProvider := discord.NewOauthProvider()
+
 	oicService := services.NewOICService(sessionRepo, oauthProvider, tokenService)
 
 	handler := http_handlers.NewAuthHandler(oicService)
