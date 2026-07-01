@@ -16,6 +16,7 @@ type JWTConfig struct {
 	JWT_PRIVATE_KEY       *rsa.PrivateKey
 	AccessTokenMinutesTTL int32
 	RefreshTokenDaysTTL   int64
+	MaxUserSessions       int
 }
 
 type APIConfig struct {
@@ -61,6 +62,7 @@ func Init() error {
 	JWT.JWT_PRIVATE_KEY = privateKey
 	JWT.AccessTokenMinutesTTL = getEnvInt32("ACCESS_TOKEN_MINUTES_TTL", 2)
 	JWT.RefreshTokenDaysTTL = getEnvInt64("REFRESH_TOKEN_DAYS_TTL", 30)
+	JWT.MaxUserSessions = getEnvInt("MAX_USER_SESSIONS", 10)
 
 	API.API_HOST = getEnv("API_HOST", "0.0.0.0")
 	API.API_PORT = getEnvInt("API_PORT", 8080)

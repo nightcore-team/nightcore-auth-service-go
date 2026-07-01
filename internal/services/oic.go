@@ -17,10 +17,8 @@ type TokenService interface {
 type SessionRepository interface {
 	Create(ctx context.Context, ttl time.Duration, ipAddress, refreshToken string, userID int64) (*entity.Session, *domain.AppError)
 	Delete(ctx context.Context, refreshToken string, userID int64) (int64, *domain.AppError)
-	DeleteAll(ctx context.Context, userID int64) *domain.AppError
 	Get(ctx context.Context, refreshToken string) ( *entity.Session, *domain.AppError)
 	GetDel(ctx context.Context, refreshToken string) ( *entity.Session, *domain.AppError)
-	GetAll(ctx context.Context, userID int64) ([]string, *domain.AppError)
 }
 
 type OauthProvider interface {
@@ -55,20 +53,6 @@ func (s *OICService) Login(ctx context.Context, code, ipAddress string) (*entity
 	}
 
 	refreshToken := s.tokenService.CreateRefreshToken()
-
-	userSessions, err := s.sessionRepo.GetAll(ctx, userInfo.ID)
-	if err != nil {
-		slog.Error("failed to get user sessions", "user_id", userInfo.ID, "error", err)
-		return nil, err
-	}
-	
-	if len(userSessions) >= 2 {
-		err := s.sessionRepo.DeleteAll(ctx, userInfo.ID)
-		if err != nil {
-			slog.Error("failed to delete all user sessions", "user_id", userInfo.ID, "error", err)
-			return nil, err
-		}
-	}
 
 	ttl := time.Hour * 24 * time.Duration(config.JWT.RefreshTokenDaysTTL)
 	_, err = s.sessionRepo.Create(ctx, ttl, ipAddress, refreshToken, userInfo.ID)

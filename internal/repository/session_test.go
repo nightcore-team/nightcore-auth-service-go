@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"nightcore-team/nightcore-auth-service-go/config"
 	"nightcore-team/nightcore-auth-service-go/internal/domain/entity"
 
 	"github.com/go-redis/redismock/v9"
@@ -71,7 +72,8 @@ func TestSessionRepository_GetDel(t *testing.T) {
 		data, err := session.MarshalBinary()
 		require.NoError(t, err)
 
-		mock.ExpectGetDel("session:refresh-token-2").SetVal(string(data))
+		mock.ExpectEval(getDelSessionScript, []string{"session:refresh-token-2"}, "refresh-token-2").
+			SetVal(string(data))
 
 		got, appErr := repo.GetDel(context.Background(), "refresh-token-2")
 
@@ -84,7 +86,8 @@ func TestSessionRepository_GetDel(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		repo, mock := newTestRepo()
 
-		mock.ExpectGetDel("session:missing-token").RedisNil()
+		mock.ExpectEval(getDelSessionScript, []string{"session:missing-token"}, "missing-token").
+			RedisNil()
 
 		got, appErr := repo.GetDel(context.Background(), "missing-token")
 
@@ -92,9 +95,24 @@ func TestSessionRepository_GetDel(t *testing.T) {
 		assert.Nil(t, got)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
+
+	t.Run("redis error", func(t *testing.T) {
+		repo, mock := newTestRepo()
+
+		mock.ExpectEval(getDelSessionScript, []string{"session:broken-token"}, "broken-token").
+			SetErr(errors.New("connection refused"))
+
+		got, appErr := repo.GetDel(context.Background(), "broken-token")
+
+		assert.Nil(t, got)
+		require.NotNil(t, appErr)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
 }
 
 func TestSessionRepository_Create(t *testing.T) {
+	config.JWT.MaxUserSessions = 10
+
 	repo, mock := newTestRepo()
 
 	userID := int64(3)
@@ -103,12 +121,13 @@ func TestSessionRepository_Create(t *testing.T) {
 	ipAddress := "192.168.0.1"
 
 	expectedSession := &entity.Session{UserID: userID, IpAddress: ipAddress}
+	data, err := expectedSession.MarshalBinary()
+	require.NoError(t, err)
 
-	mock.ExpectTxPipeline()
-	mock.ExpectSAdd("user_sessions:3", refreshToken).SetVal(1)
-	mock.ExpectExpire("user_sessions:3", ttl).SetVal(true)
-	mock.ExpectSet("session:refresh-token-3", expectedSession, ttl).SetVal("OK")
-	mock.ExpectTxPipelineExec()
+	mock.ExpectEval(createSessionScript,
+		[]string{"user_sessions:3", "session:refresh-token-3"},
+		refreshToken, int64(ttl.Seconds()), config.JWT.MaxUserSessions, string(data),
+	).SetVal(int64(1))
 
 	session, appErr := repo.Create(context.Background(), ttl, ipAddress, refreshToken, userID)
 
@@ -138,16 +157,12 @@ func TestSessionRepository_Delete(t *testing.T) {
 }
 
 func TestSessionRepository_DeleteAll(t *testing.T) {
-	t.Run("with sessions", func(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
 		repo, mock := newTestRepo()
 
 		userID := int64(5)
 
-		mock.ExpectSMembers("user_sessions:5").SetVal([]string{"token-a", "token-b"})
-		mock.ExpectTxPipeline()
-		mock.ExpectDel("user_sessions:5").SetVal(1)
-		mock.ExpectDel("token-a", "token-b").SetVal(2)
-		mock.ExpectTxPipelineExec()
+		mock.ExpectEval(deleteAllSessionsScript, []string{"user_sessions:5"}).SetVal(int64(2))
 
 		appErr := repo.DeleteAll(context.Background(), userID)
 
@@ -155,28 +170,12 @@ func TestSessionRepository_DeleteAll(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("no sessions", func(t *testing.T) {
-		repo, mock := newTestRepo()
-
-		userID := int64(6)
-
-		mock.ExpectSMembers("user_sessions:6").SetVal([]string{})
-		mock.ExpectTxPipeline()
-		mock.ExpectDel("user_sessions:6").SetVal(1)
-		mock.ExpectTxPipelineExec()
-
-		appErr := repo.DeleteAll(context.Background(), userID)
-
-		assert.Nil(t, appErr)
-		assert.NoError(t, mock.ExpectationsWereMet())
-	})
-
-	t.Run("smembers error", func(t *testing.T) {
+	t.Run("redis error", func(t *testing.T) {
 		repo, mock := newTestRepo()
 
 		userID := int64(7)
 
-		mock.ExpectSMembers("user_sessions:7").SetErr(errors.New("timeout"))
+		mock.ExpectEval(deleteAllSessionsScript, []string{"user_sessions:7"}).SetErr(errors.New("timeout"))
 
 		appErr := repo.DeleteAll(context.Background(), userID)
 

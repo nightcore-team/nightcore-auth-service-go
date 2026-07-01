@@ -24,10 +24,6 @@ func (m *MockSessionRepository) Delete(ctx context.Context, refreshToken string,
 	args := m.Called(ctx, refreshToken, userID)
 	return args.Get(0).(int64), appErr(args, 1)
 }
-func (m *MockSessionRepository) DeleteAll(ctx context.Context, userID int64) *domain.AppError {
-	args := m.Called(ctx, userID)
-	return appErr(args, 0)
-}
 func (m *MockSessionRepository) Get(ctx context.Context, refreshToken string) (*entity.Session, *domain.AppError) {
 	args := m.Called(ctx, refreshToken)
 	return sessionPtr(args, 0), appErr(args, 1)
@@ -35,13 +31,6 @@ func (m *MockSessionRepository) Get(ctx context.Context, refreshToken string) (*
 func (m *MockSessionRepository) GetDel(ctx context.Context, refreshToken string) (*entity.Session, *domain.AppError) {
 	args := m.Called(ctx, refreshToken)
 	return sessionPtr(args, 0), appErr(args, 1)
-}
-func (m *MockSessionRepository) GetAll(ctx context.Context, userID int64) ([]string, *domain.AppError) {
-	args := m.Called(ctx, userID)
-	if args.Get(0) == nil {
-		return nil, appErr(args, 1)
-	}
-	return args.Get(0).([]string), appErr(args, 1)
 }
 
 type MockOauthProvider struct{ mock.Mock }
@@ -96,15 +85,13 @@ func setupOIC() (*OICService, *MockSessionRepository, *MockOauthProvider, *MockT
 }
 
 func TestOICService_Login(t *testing.T) {
-	t.Run("success with old sessions cleanup", func(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
 		svc, repo, oauth, token := setupOIC()
 		ctx := context.Background()
 
 		oauth.On("ExchangeCode", ctx, "discord-code").Return(&entity.DiscordTokenData{Access_token: "discord-access"}, nil)
 		oauth.On("GetUserInfo", ctx, "discord-access").Return(&entity.DiscordUserData{ID: 123}, nil)
 		token.On("CreateRefreshToken").Return("new-refresh-token")
-		repo.On("GetAll", ctx, int64(123)).Return([]string{"old-token-1", "old-token-2"}, nil)
-		repo.On("DeleteAll", ctx, int64(123)).Return(nil)
 
 		expectedTTL := time.Hour * 24 * time.Duration(config.JWT.RefreshTokenDaysTTL)
 		repo.On("Create", ctx, expectedTTL, "127.0.0.1", "new-refresh-token", int64(123)).Return(&entity.Session{UserID: 123}, nil)
@@ -119,27 +106,6 @@ func TestOICService_Login(t *testing.T) {
 		oauth.AssertExpectations(t)
 		repo.AssertExpectations(t)
 		token.AssertExpectations(t)
-		repo.AssertCalled(t, "DeleteAll", ctx, int64(123))
-	})
-
-	t.Run("success without cleanup", func(t *testing.T) {
-		svc, repo, oauth, token := setupOIC()
-		ctx := context.Background()
-
-		oauth.On("ExchangeCode", ctx, "code").Return(&entity.DiscordTokenData{Access_token: "acc"}, nil)
-		oauth.On("GetUserInfo", ctx, "acc").Return(&entity.DiscordUserData{ID: 123}, nil)
-		token.On("CreateRefreshToken").Return("new-refresh")
-		repo.On("GetAll", ctx, int64(123)).Return([]string{"old-token-1"}, nil)
-
-		expectedTTL := time.Hour * 24 * time.Duration(config.JWT.RefreshTokenDaysTTL)
-		repo.On("Create", ctx, expectedTTL, "127.0.0.1", "new-refresh", int64(123)).Return(&entity.Session{UserID: 123}, nil)
-		token.On("CreateAccessToken", int64(123)).Return("new-access", nil)
-
-		result, err := svc.Login(ctx, "code", "127.0.0.1")
-
-		require.Nil(t, err)
-		assert.Equal(t, "new-access", result.AccessToken)
-		repo.AssertNotCalled(t, "DeleteAll")
 	})
 
 	t.Run("error on ExchangeCode", func(t *testing.T) {
@@ -167,37 +133,6 @@ func TestOICService_Login(t *testing.T) {
 		assert.Equal(t, domain.ErrOauthExchangeFailed, err)
 	})
 
-	t.Run("error on GetAll", func(t *testing.T) {
-		svc, repo, oauth, token := setupOIC()
-		ctx := context.Background()
-
-		oauth.On("ExchangeCode", ctx, "code").Return(&entity.DiscordTokenData{Access_token: "acc"}, nil)
-		oauth.On("GetUserInfo", ctx, "acc").Return(&entity.DiscordUserData{ID: 123}, nil)
-		token.On("CreateRefreshToken").Return("new-refresh")
-		repo.On("GetAll", ctx, int64(123)).Return(nil, domain.ErrUnknownRedis)
-
-		result, err := svc.Login(ctx, "code", "127.0.0.1")
-
-		assert.Nil(t, result)
-		assert.Equal(t, domain.ErrUnknownRedis, err)
-	})
-
-	t.Run("error on DeleteAll", func(t *testing.T) {
-		svc, repo, oauth, token := setupOIC()
-		ctx := context.Background()
-
-		oauth.On("ExchangeCode", ctx, "code").Return(&entity.DiscordTokenData{Access_token: "acc"}, nil)
-		oauth.On("GetUserInfo", ctx, "acc").Return(&entity.DiscordUserData{ID: 123}, nil)
-		token.On("CreateRefreshToken").Return("new-refresh")
-		repo.On("GetAll", ctx, int64(123)).Return([]string{"t1", "t2"}, nil)
-		repo.On("DeleteAll", ctx, int64(123)).Return(domain.ErrUnknownRedis)
-
-		result, err := svc.Login(ctx, "code", "127.0.0.1")
-
-		assert.Nil(t, result)
-		assert.Equal(t, domain.ErrUnknownRedis, err)
-	})
-
 	t.Run("error on Create session", func(t *testing.T) {
 		svc, repo, oauth, token := setupOIC()
 		ctx := context.Background()
@@ -205,7 +140,6 @@ func TestOICService_Login(t *testing.T) {
 		oauth.On("ExchangeCode", ctx, "code").Return(&entity.DiscordTokenData{Access_token: "acc"}, nil)
 		oauth.On("GetUserInfo", ctx, "acc").Return(&entity.DiscordUserData{ID: 123}, nil)
 		token.On("CreateRefreshToken").Return("new-refresh")
-		repo.On("GetAll", ctx, int64(123)).Return([]string{}, nil)
 
 		expectedTTL := time.Hour * 24 * time.Duration(config.JWT.RefreshTokenDaysTTL)
 		repo.On("Create", ctx, expectedTTL, "127.0.0.1", "new-refresh", int64(123)).Return(nil, domain.ErrUnknownRedis)
@@ -223,7 +157,6 @@ func TestOICService_Login(t *testing.T) {
 		oauth.On("ExchangeCode", ctx, "code").Return(&entity.DiscordTokenData{Access_token: "acc"}, nil)
 		oauth.On("GetUserInfo", ctx, "acc").Return(&entity.DiscordUserData{ID: 123}, nil)
 		token.On("CreateRefreshToken").Return("new-refresh")
-		repo.On("GetAll", ctx, int64(123)).Return([]string{}, nil)
 
 		expectedTTL := time.Hour * 24 * time.Duration(config.JWT.RefreshTokenDaysTTL)
 		repo.On("Create", ctx, expectedTTL, "127.0.0.1", "new-refresh", int64(123)).Return(&entity.Session{UserID: 123}, nil)

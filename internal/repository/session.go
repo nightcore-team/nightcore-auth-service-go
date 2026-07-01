@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"nightcore-team/nightcore-auth-service-go/config"
 	"nightcore-team/nightcore-auth-service-go/internal/domain"
 	"nightcore-team/nightcore-auth-service-go/internal/domain/entity"
 	"time"
@@ -12,9 +13,9 @@ import (
 
 type RedisClient interface {
 	Get(ctx context.Context, key string) *redis.StringCmd
-	GetDel(ctx context.Context, key string) *redis.StringCmd
 	SMembers(ctx context.Context, key string) *redis.StringSliceCmd
 	TxPipeline() redis.Pipeliner
+	Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd
 }
 
 type SessionRepository struct {
@@ -51,14 +52,18 @@ func (r *SessionRepository) Get(ctx context.Context, refreshToken string) (*enti
 }
 
 func (r *SessionRepository) GetDel(ctx context.Context, refreshToken string) (*entity.Session, *domain.AppError) {
-	cmd := r.client.GetDel(ctx, r.sessionKey(refreshToken))
-	session := &entity.Session{}
+	cmd := r.client.Eval(ctx, getDelSessionScript, []string{r.sessionKey(refreshToken)}, refreshToken)
 
-	err := cmd.Scan(session)
+	data, err := cmd.Text()
 	if err == redis.Nil {
 		return nil, nil
 	}
 	if err != nil {
+		return nil, domain.ErrUnknownRedis.WithCause(err)
+	}
+
+	session := &entity.Session{}
+	if err := session.UnmarshalBinary([]byte(data)); err != nil {
 		return nil, domain.ErrUnknownRedis.WithCause(err)
 	}
 
@@ -68,14 +73,16 @@ func (r *SessionRepository) GetDel(ctx context.Context, refreshToken string) (*e
 func (r *SessionRepository) Create(ctx context.Context, ttl time.Duration, ipAddress, refreshToken string, userID int64) (*entity.Session, *domain.AppError) {
 	session := &entity.Session{UserID: userID, IpAddress: ipAddress}
 
-	pipe := r.client.TxPipeline()
-
-	pipe.SAdd(ctx, r.userSessionsKey(userID), refreshToken)
-	pipe.Expire(ctx, r.userSessionsKey(userID), ttl)
-	pipe.Set(ctx, r.sessionKey(refreshToken), session, ttl)
-
-	_, err := pipe.Exec(ctx)
+	data, err := session.MarshalBinary()
 	if err != nil {
+		return nil, domain.ErrUnknownRedis.WithCause(err)
+	}
+
+	cmd := r.client.Eval(ctx, createSessionScript,
+		[]string{r.userSessionsKey(userID), r.sessionKey(refreshToken)},
+		refreshToken, int64(ttl.Seconds()), config.JWT.MaxUserSessions, string(data),
+	)
+	if err := cmd.Err(); err != nil {
 		return nil, domain.ErrUnknownRedis.WithCause(err)
 	}
 
@@ -97,20 +104,8 @@ func (r *SessionRepository) Delete(ctx context.Context, refreshToken string, use
 }
 
 func (r *SessionRepository) DeleteAll(ctx context.Context, userID int64) *domain.AppError {
-	pipe := r.client.TxPipeline()
-
-	keys, err := r.client.SMembers(ctx, r.userSessionsKey(userID)).Result()
-	if err != nil {
-		return domain.ErrUnknownRedis.WithCause(err)
-	}
-
-	pipe.Del(ctx, r.userSessionsKey(userID))
-	if len(keys) > 0 {
-		pipe.Del(ctx, keys...)
-	}
-
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	cmd := r.client.Eval(ctx, deleteAllSessionsScript, []string{r.userSessionsKey(userID)})
+	if err := cmd.Err(); err != nil {
 		return domain.ErrUnknownRedis.WithCause(err)
 	}
 
