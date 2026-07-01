@@ -1,0 +1,72 @@
+name: nightcore-auth-service
+
+networks:
+  nightcore-network:
+    name: nightcore-network
+    driver: bridge
+
+services:
+  nightcore-auth-service:
+    image: nightcore-auth-service:latest
+    container_name: nightcore-auth-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+
+    depends_on:
+      nightcore-auth-redis:
+        condition: service_healthy
+
+    networks:
+      - nightcore-network
+
+    ports:
+      - "${API_PORT}:${API_PORT}"
+
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  nightcore-auth-redis:
+    image: redis:7-alpine
+    container_name: nightcore-auth-redis
+    restart: unless-stopped
+    env_file:
+      - .env
+
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+    networks:
+      - nightcore-network
+
+  nightcore-auth-redisinsight:
+    image: redis/redisinsight:latest
+    container_name: nightcore-auth-redisinsight
+    restart: unless-stopped
+    env_file:
+      - .env
+
+    ports:
+      - "${REDIS_INSIGHT_PORT}:${REDIS_INSIGHT_PORT}"
+
+    volumes:
+      - ./.redisinsight:/data
+
+    depends_on:
+      nightcore-auth-redis:
+        condition: service_healthy
+
+    networks:
+      - nightcore-network
